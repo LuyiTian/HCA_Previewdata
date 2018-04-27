@@ -1,0 +1,109 @@
+---
+title: "HCA pilot data analysis - `ischaemic_sensitivity`"
+output: html_notebook
+---
+
+```{r}
+library(scPipe)
+library(scran)
+library(scater)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(pheatmap)
+```
+
+## create `sce` object from the output of `scPipe`
+
+```{r}
+samplename = "ischaemic_sensitivity"
+out_dir = "/Users/tian.l/data/hca_pilot_isch/"
+sce = create_sce_by_dir(out_dir, organism="hsapiens_gene_ensembl",gene_id_type="ensembl_gene_id")
+```
+
+
+```{r}
+overall_stat = demultiplex_info(sce)
+datatable(overall_stat, width=800)
+```
+
+
+
+```{r}
+plot_demultiplex(sce)
+```
+
+
+```{r}
+plot_mapping(sce, dataname=samplename, percentage = FALSE)
+```
+
+```{r}
+plot_mapping(sce, dataname=samplename, percentage = TRUE)
+```
+
+
+```{r}
+sce = calculate_QC_metrics(sce)
+sce_qc = detect_outlier(sce, type="low", comp = 2)
+table(QC_metrics(sce_qc)$outliers)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+plot_QC_pairs(sce_qc)
+```
+
+
+```{r}
+sce_qc = remove_outliers(sce_qc)
+sce_qc = convert_geneid(sce_qc, returns="external_gene_name")
+sce_qc <- calculateQCMetrics(sce_qc)
+plotQC(sce_qc, type = "highest-expression", n=20)
+```
+
+
+```{r}
+keep1 = (apply(counts(sce_qc), 1, function(x) mean(x[x>0])) > 1)  # average count larger than one
+keep2 = (rowSums(counts(sce_qc)>0) > 5)  # expressed in at least three cells
+
+sce_qc = sce_qc[(keep1 & keep2), ]
+dim(sce_qc)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+sce_qc <- computeSumFactors(sce_qc)
+sce_qc <- normalize(sce_qc)
+
+var.fit <- trendVar(sce_qc, method="loess", use.spikes=FALSE, span=0.2)
+var.out <- decomposeVar(sce_qc, var.fit)
+
+hvg.out <- var.out[order(var.out$bio, decreasing=TRUE)[1:500], ]
+
+plot(var.out$mean, var.out$total, pch=16, cex=0.6, xlab="Mean log-expression",
+     ylab="Variance of log-expression")
+o <- order(var.out$mean)
+lines(var.out$mean[o], var.out$tech[o], col="dodgerblue", lwd=2)
+points(var.out$mean[rownames(var.out) %in% rownames(hvg.out)], var.out$total[rownames(var.out) %in% rownames(hvg.out)], col="red", pch=16)
+```
+
+
+```{r}
+var.cor = correlatePairs(sce_qc, subset.row=rownames(hvg.out))
+sig.cor = var.cor$FDR <= 0.0005
+chosen = unique(c(var.cor$gene1[sig.cor], var.cor$gene2[sig.cor]))
+pheatmap(logcounts(sce_qc)[chosen,],show_rownames=F,show_colnames=F)
+```
+
+
+```{r}
+plotTSNE(sce_qc, exprs_values="logcounts", perplexity=20, colour_by="total_features",
+     feature_set=chosen)  + ggtitle("t-SNE Perplexity = 20")
+```
+
+```{r}
+save(sce,file="ischaemic_sensitivity_raw.RData")
+save(sce_qc,file="ischaemic_sensitivity_QC_norm.RData")
+```
+
